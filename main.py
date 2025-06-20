@@ -1,45 +1,44 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse
 import requests
 from bs4 import BeautifulSoup
 
 app = FastAPI()
 
-# Enable CORS for all origins
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow requests from any frontend
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.get("/api/outline", response_class=PlainTextResponse)
-async def get_outline(country: str = Query(..., description="Country name")):
+@app.get("/api/outline")
+def get_outline(country: str = Query(...)):
     url = f"https://en.wikipedia.org/wiki/{country.replace(' ', '_')}"
-
+    
     try:
         response = requests.get(url)
         response.raise_for_status()
     except Exception as e:
-        return f"❌ Could not load Wikipedia page: {str(e)}"
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    
+    soup = BeautifulSoup(response.content, "lxml")
+    headings = soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+    
+    # Start with a single "## Contents" and country name
+    markdown = f"## Contents\n\n# {country}\n\n"
 
-    soup = BeautifulSoup(response.text, 'lxml')
+    for heading in headings:
+        text = heading.get_text(strip=True)
 
-    # Extract title from first <h1>
-    title = soup.find("h1").get_text(strip=True) if soup.find("h1") else country
+        # Skip duplicate or noisy headings
+        if text.lower() in [country.lower(), "contents"]:
+            continue
 
-    # Extract headings
-    headings = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+        level = int(heading.name[1])
+        markdown += f"{'#' * level} {text}\n\n"
 
-    markdown = "## Contents\n\n"
-    markdown += f"# {title}\n\n"
+    return {"outline": markdown.strip()}
 
-    for tag in headings:
-        level = int(tag.name[1])
-        text = tag.get_text(strip=True).replace("[edit]", "")
-        if text and "Coordinates" not in text:
-            markdown += f"{'#' * level} {text}\n\n"
-
-    return markdown.strip()
